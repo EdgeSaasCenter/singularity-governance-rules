@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Circuit Breaker State Schema",
+  "type": "object",
+  "required": ["mode", "current_task_id", "consecutive_failures", "last_error_signature"],
+  "properties": {
+    "mode": {
+      "type": "string",
+      "enum": ["GUARDIAN", "DEGRADED", "BYPASS"],
+      "description": "Estado operacional do Hook (Regra 11 da Execução Atômica)"
+    },
+    "current_task_id": {
+      "type": "string",
+      "description": "ID da tarefa em execução para saber se o erro repete no mesmo ponto"
+    },
+    "consecutive_failures": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Contagem de falhas (Zera ao passar de fase, ejeta no 3)"
+    },
+    "last_error_signature": {
+      "type": "string",
+      "description": "Hash ou string bruta do último erro atirado, para rastrear DoS de Loop"
+    },
+    "bypass_expiry": {
+      "type": "number",
+      "description": "Timestamp Unix de expiração para o modo BYPASS (max 120min)"
+    }
+  }
+}

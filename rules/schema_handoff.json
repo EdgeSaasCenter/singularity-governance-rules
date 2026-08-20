@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Singularity Handoff Schema",
+  "description": "Contrato de passagem de bastão (Handoff) tipado para as transições do Meta-Planning",
+  "type": "object",
+  "required": [
+    "handoff_id",
+    "complexity",
+    "target_files",
+    "atomic_steps"
+  ],
+  "properties": {
+    "handoff_id": {
+      "type": "string",
+      "description": "ID rastreável da tarefa ou do ciclo gerador"
+    },
+    "complexity": {
+      "type": "string",
+      "enum": ["TRIVIAL", "LOW", "MID", "HIGH"],
+      "description": "Peso arquitetural da tarefa"
+    },
+    "target_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Lista de arquivos que sofrerão mutação"
+    },
+    "atomic_steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Ordem sequencial e isolada de ações",
+      "items": {
+        "type": "object",
+        "required": ["step_id", "description", "action", "expected_outcome"],
+        "properties": {
+          "step_id": { "type": "string" },
+          "description": { "type": "string", "description": "Dissertação do objetivo da etapa" },
+          "action": { "type": "string", "description": "Comando ou mudança física" },
+          "expected_outcome": { "type": "string", "description": "Critério de sucesso (Exit 0, Teste Passando, etc)" }
+        }
+      }
+    }
+  }
+}
