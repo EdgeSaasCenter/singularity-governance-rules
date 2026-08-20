@@ -9,6 +9,7 @@ const requiredRules = [
   'singularity_maturity.md',
   'no_stop_hook.md',
   'context_savepoint.md',
+  'token_investment_and_epistemic_efficiency.md',
   'AGENTS.md'
 ];
 
@@ -19,4 +20,4 @@ for (const rule of requiredRules) {
     process.exit(1);
   }
 }
-console.log('PASS: All 7 Singularity Governance Rules present and verified ✓');
+console.log('PASS: All 8 Singularity Governance Rules present and verified ✓');

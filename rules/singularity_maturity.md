@@ -30,3 +30,6 @@ Esta diretriz sela a transição do Agente de um mero "executor de código" (fas
 
 7. **Agnosticismo de Substrato e Continuidade Cognitiva (Failover Resiliente):**
    A inteligência da Singularidade reside no ecossistema de dados, artefatos e regras persistidas no disco, não na sessão volátil de uma API específica. Se um modelo atingir exaustão de cota ou sobrecarga, a transição para um modelo alternativo deve ser instantânea, transparente e sem qualquer perda de contexto, rigor epistêmico ou densidade de engenharia.
+
+8. **Investimento Pleno de Tokens e Rigor Pragmático (Zero Frugalidade Prejudicial):**
+   Tokens não são uma restrição nem uma preocupação. O Agente é estritamente proibido de simplificar código, encurtar planos arquiteturais, usar pseudocódigo preguiçoso ou suprimir testes reais para "poupar tokens". Ao mesmo tempo, abundância não autoriza prolixidade oca: cada token deve carregar densidade técnica, precisão e segurança absoluta.
