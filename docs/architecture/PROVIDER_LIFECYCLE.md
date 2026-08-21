@@ -1,79 +1,111 @@
-# Singularity Workbench — Provider Lifecycle State Machine
-**Phase 9 Subsystem Architecture | FSM Formal Specification & Revocation Contract**
+# Singularity Architecture — Provider Lifecycle State Machine
+
+## 1. Executive Summary & Lifecycle Invariants
+
+The Provider Lifecycle State Machine enforces a unidirectional, monotonic progression through operational states, preventing unverified execution and governing state degradation and revocation.
+
+### Constitutional Invariants
+- **Progressive Activation Only:** Direct jumps from `UNKNOWN` or `DISCOVERED` directly to `VERIFIED` are strictly prohibited and throw `ILLEGAL_LIFECYCLE_TRANSITION`.
+- **Revocation is Terminal:** Once a provider is in `REVOKED` state, it cannot be un-revoked or transitioned to `VERIFIED` without creating a new cryptographic identity.
+- **Fail-Closed Degradation:** Consecutive execution failures automatically degrade and disable providers to protect workbench stability.
 
 ---
 
-## 1. Canonical Finite State Machine (FSM)
-
-The lifecycle of an execution provider in the Singularity Runtime is governed by an explicit, finite state machine implemented in `ProviderLifecycleManager`. State transitions cannot occur implicitly, and illegal skips are rejected fail-closed with immediate security audit warnings.
+## 2. Finite State Machine (FSM) Transition Diagram
 
 ```
-                   ┌──────────┐
-                   │ UNKNOWN  │
-                   └────┬─────┘
-                        │
-                        ▼
-                 ┌──────────────┐
-                 │  DISCOVERED  ├───────────────────────────────┐
-                 └──────┬───────┘                               │
-                        │                                       │
-                        ▼                                       │
-                 ┌──────────────┐                               │
-                 │  CONFIGURED  ├─────────────────────────┐     │
-                 └──────┬───────┘                         │     │
-                        │                                 │     │
-                        ▼                                 │     │
-               ┌─────────────────┐                        │     │
-               │  AUTHENTICATED  ├───────────────────┐    │     │
-               └────────┬────────┘                   │    │     │
-                        │                            │    │     │
-                        ▼                            │    │     │
-                 ┌──────────────┐                    │    │     │
-        ┌───────►│   VERIFIED   ├──────────────┐     │    │     │
-        │        └──────┬───────┘              │     │    │     │
-        │ (Healed)      │ (Degraded)           ▼     ▼    ▼     ▼
-        │               ▼                 ┌────────────────────┐
-        └─────────┌────────────┐          │      DISABLED      │
-                  │  DEGRADED  ├─────────►│                    │
-                  └────────────┘          └─────────┬──────────┘
-                                                    │
-                                                    ▼
-                                          ┌────────────────────┐
-                                          │      REVOKED       │ ◄── [TERMINAL STATE]
-                                          └────────────────────┘
+      ┌──────────┐
+      │ UNKNOWN  │
+      └────┬─────┘
+           │ (1) Discover
+           ▼
+     ┌────────────┐
+     │ DISCOVERED │
+     └─────┬──────┘
+           │ (2) Configure
+           ▼
+     ┌────────────┐
+     │ CONFIGURED │
+     └─────┬──────┘
+           │ (3) Authenticate
+           ▼
+    ┌───────────────┐
+    │ AUTHENTICATED │
+    └──────┬────────┘
+           │ (4) 8-Axis Verify
+           ▼
+     ┌────────────┐           (5) Failures >= 3           ┌──────────┐
+     │  VERIFIED  ├──────────────────────────────────────►│ DEGRADED │
+     └─────┬──────┤                                       └────┬─────┘
+           │      │◄───────────────────────────────────────────┤
+           │      │              (6) Probe Recovers            │
+           │      │                                            │ (7) Failures >= 5
+           │      │                                            ▼
+           │      │                                       ┌──────────┐
+           │      └──────────────────────────────────────►│ DISABLED │
+           │                                              └────┬─────┘
+           │                                                   │
+           │ (8) Security / Integrity Breach                   │ (8)
+           ▼                                                   ▼
+     ┌───────────────────────────────────────────────────────────────┐
+     │                            REVOKED                            │
+     │                      (Terminal State)                         │
+     └───────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. Formal Transition Matrix
+## 3. Canonical Transition Matrix (`LEGAL_LIFECYCLE_TRANSITIONS`)
 
-| From State | Allowed Target States | Enforcement Policy |
-| :--- | :--- | :--- |
-| `UNKNOWN` | `DISCOVERED` | Initial candidate parsing from approved discovery source. |
-| `DISCOVERED` | `CONFIGURED`, `DISABLED`, `REVOKED` | Manifest validated; circular dependencies checked. |
-| `CONFIGURED` | `AUTHENTICATED`, `DISABLED`, `REVOKED` | Transport credentials, scopes, and keys verified. |
-| `AUTHENTICATED` | `VERIFIED`, `DEGRADED`, `DISABLED`, `REVOKED` | Full 8-axis verification completed successfully. |
-| `VERIFIED` | `DEGRADED`, `DISABLED`, `REVOKED` | Runtime operational monitoring or security revocation. |
-| `DEGRADED` | `VERIFIED`, `DISABLED`, `REVOKED` | Success threshold recovered or consecutive failures escalated. |
-| `DISABLED` | `CONFIGURED`, `AUTHENTICATED`, `VERIFIED`, `REVOKED` | Administrative intervention or diagnostic check passed. |
-| `REVOKED` | *(None — Terminal)* | Irrevocable state due to compromise, tamper, or policy ban. |
+```typescript
+export const LEGAL_LIFECYCLE_TRANSITIONS: Record<CapabilityStatus, CapabilityStatus[]> = {
+  [CapabilityStatus.UNKNOWN]: [
+    CapabilityStatus.DISCOVERED,
+    CapabilityStatus.REVOKED
+  ],
+  [CapabilityStatus.DISCOVERED]: [
+    CapabilityStatus.CONFIGURED,
+    CapabilityStatus.DISABLED,
+    CapabilityStatus.REVOKED
+  ],
+  [CapabilityStatus.CONFIGURED]: [
+    CapabilityStatus.AUTHENTICATED,
+    CapabilityStatus.DISABLED,
+    CapabilityStatus.REVOKED
+  ],
+  [CapabilityStatus.AUTHENTICATED]: [
+    CapabilityStatus.VERIFIED,
+    CapabilityStatus.DISABLED,
+    CapabilityStatus.REVOKED
+  ],
+  [CapabilityStatus.VERIFIED]: [
+    CapabilityStatus.DEGRADED,
+    CapabilityStatus.DISABLED,
+    CapabilityStatus.REVOKED
+  ],
+  [CapabilityStatus.DEGRADED]: [
+    CapabilityStatus.VERIFIED,
+    CapabilityStatus.DISABLED,
+    CapabilityStatus.REVOKED
+  ],
+  [CapabilityStatus.DISABLED]: [
+    CapabilityStatus.DISCOVERED,
+    CapabilityStatus.REVOKED
+  ],
+  [CapabilityStatus.REVOKED]: [] // Terminal State — No outgoing transitions
+};
+```
 
 ---
 
-## 3. Dynamic Health Monitoring & Graceful Degradation
+## 4. Operational Health Monitor Thresholds
 
-The `ProviderHealthMonitor` executes real-time operational health checks:
-- **Success Tracking:** Records latency and increments operational success counters, resetting consecutive failure metrics.
-- **Degradation Threshold ($N \ge 3$ consecutive failures):** Transitions provider from `VERIFIED` $\to$ `DEGRADED`. The `WeaverRouter` continues to evaluate the provider but penalizes its routing score, prioritizing healthy secondary candidates.
-- **Disablement Threshold ($N \ge 5$ consecutive failures):** Transitions provider from `DEGRADED` $\to$ `DISABLED`. The provider is immediately pruned from the active candidate pool.
-- **Autonomous Recovery:** If a subsequent health check probe succeeds, the provider recovers from `DEGRADED` $\to$ `VERIFIED`.
-
----
-
-## 4. Immediate Audited Revocation
-
-The `RevocationManager` handles audited security revocations:
-- **Supported Revocation Reasons:** `SECURITY`, `AUTH_REVOKED`, `PROVIDER_INVALID`, `MANIFEST_TAMPERING`, `POLICY`, `ADMINISTRATIVE`, `INTEGRITY_FAILURE`.
-- **Immediate Registry Invalidation:** Updates `ProviderRegistry` and `CapabilityRegistry` to status `REVOKED` and health `DISABLED`.
-- **Weaver Routing Exclusion:** The `WeaverRouter` and `CapabilityResolver` strictly fail-closed (`ALL_PROVIDERS_DISABLED`) if a request attempts to invoke a revoked provider.
-- **Evidence Emission:** Emits an immutable `EvidenceEventType.CIRCUIT_OPENED` cryptographic event into the Evidence Store with full forensic correlation.
+`ProviderHealthMonitor` maintains in-flight telemetry and triggers automated FSM transitions:
+1. **Threshold 3 Consecutive Failures:**
+   - Automatically transitions provider from `VERIFIED` $\to$ `DEGRADED`.
+   - Emits `HEALTH_CHANGED` evidence event.
+2. **Threshold 5 Consecutive Failures:**
+   - Automatically transitions provider from `DEGRADED` $\to$ `DISABLED`.
+   - Blocks Weaver and Resolver from selecting provider.
+3. **Recovery on Success:**
+   - Upon a successful execution, resets consecutive failure counter to 0 and restores health to `HEALTHY`.

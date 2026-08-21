@@ -1,78 +1,77 @@
-# Micro-Etapa 029: Autonomous Capability Discovery & Provider Lifecycle
+# Micro Etapa 029: Autonomous Capability Discovery, Verification Engine & Provider Lifecycle Management
 
-## 1. Contexto e Objetivo Arquitetural
-A Fase 9 do **Singularity Workbench** estabelece o subsistema autônomo de descoberta de capabilities e gestão de ciclo de vida de providers (`src/capabilities/discovery/`). O objetivo foi transformar a integração de componentes externos em um pipeline determinístico e fail-closed com base no axioma inegociável:
-
-$$\text{DISCOVERY} \neq \text{TRUST}$$
-
-O subsistema garante que a observação de um provider ou manifesto jamais conceda privilégios de execução imediatos, exigindo uma esteira rigorosa de validação sintática, verificação em 8 eixos, transições em máquina de estados finitos (FSM), monitoramento de degradação e revogação auditada.
-
----
-
-## 2. Destruição da Solução Óbvia (Máquina de Divergência)
-
-### A Solução Ingênua (Descartada):
-- *Abordagem:* Importar dinamicamente scripts de providers via `import()` ou invocar comandos de shell arbitrários definidos em manifestos YAML/JSON, registrando-os imediatamente no `CapabilityRegistry` e `ProviderRegistry` como operacionais.
-- *Por que Falha:* Cria um vetor crítico de Execução Remota de Código (RCE) e escalação de privilégios. Manifestos adulterados poderiam declarar `riskLevel: ZERO` para operações destrutivas de disco, introduzir loops circulares de dependência que travam o runtime, ou ocultar credenciais/chaves privadas em metadados sem sanitização. Além disso, a falta de uma máquina de estados explícita permitiria saltos ilegais de `DISCOVERED` diretamente para `VERIFIED`.
-
-### A Solução Resiliente Implementada:
-1. **Manifest Validator & Sanitizer:** Validação Zod estrita de candidatos contra injeção de esquemas inválidos, detecção topológica de dependências circulares em grafos orientados ($A \to B \to A$), e sanitização profunda de segredos em metadados.
-2. **Probing Não Destrutivo:** `ProviderProbe` e `CapabilityProbe` inspecionam identificadores, conformidade de transporte e existência de adaptadores sem executar código arbitrário.
-3. **Verification Engine em 8 Eixos:** Avaliação ortogonal de Identidade, Transporte, Esquema, Adaptador, Saúde, Autenticação, Escopo e Dependências. O veredito `NOT_VERIFIABLE` é estritamente fail-closed e nunca se transforma em `VERIFIED`.
-4. **Finite State Machine (FSM):** Gestão rigorosa de estados (`UNKNOWN` $\to$ `DISCOVERED` $\to$ `CONFIGURED` $\to$ `AUTHENTICATED` $\to$ `VERIFIED` $\to$ `DEGRADED` $\to$ `DISABLED` $\to$ `REVOKED`) com emissão de eventos criptográficos para o `EvidenceFabric`.
-5. **Revogação Imediata & Blindagem do Weaver:** `RevocationManager` invalida registros no `ProviderRegistry` e atualiza o estado para `REVOKED`. O `WeaverRouter` e o `CapabilityResolver` bloqueiam qualquer execução direcionada a providers revogados (`ALL_PROVIDERS_DISABLED`).
-6. **Deterministic Discovery Replay:** Motor de replay em modo estritamente *Read-Only* que valida a reprodutibilidade forense das decisões de descoberta sem mutações em disco.
+## 1. Contexto & Escopo da Etapa
+- **Fase de Atuação:** Fase 9 — Autonomous Capability Discovery & Provider Lifecycle.
+- **Objetivo Arquitetural:** Construir uma infraestrutura física compilável, estritamente tipada com Zod, e integrada às Fases 1–8 para ingestão controlada de providers e capabilities (Discovery $\to$ Validation $\to$ Registration $\to$ Health $\to$ Verification $\to$ Activation $\to$ Degradation $\to$ Revocation).
+- **Invariantes Fundamentais:**
+  - *Discovery $\neq$ Trust*: O parsing de um descriptor não concede autoridade de execução.
+  - *Observation $\neq$ Authority*: A sondagem de um nó externo é estritamente observacional e não modifica políticas de segurança.
+  - *NOT_VERIFIABLE é Fail-Closed*: Ausência de adaptador ou credencial inválida impede a transição para `VERIFIED`.
+  - *Zero Arbitrary Execution*: Sem `eval`, `new Function` ou subshells durante o discovery.
 
 ---
 
-## 3. Implementação Física dos Componentes
+## 2. Subsistemas Físicos Implementados
 
-Os seguintes módulos foram construídos em `repos/singularity-mcp/src/capabilities/discovery/`:
+### 2.1. Discovery Engine (`src/capabilities/discovery/`)
+- `discoverySource.ts`: Taxonomia de fontes (`LOCAL_MANIFEST`, `MCP_SERVER`, `REST_DESCRIPTOR`, etc.) e níveis de confiança (`INTERNAL`, `CONFIGURED`, `UNTRUSTED`).
+- `discoverySanitizer.ts`: Sanitização recursiva e canônica de credenciais (API keys, JWT, Bearer tokens, private keys, URIs com auth) antes do hashing.
+- `discoverySchema.ts`: Schemas Zod para `DiscoverySource`, `DiscoveryCandidate`, `ProviderObservation`, `CapabilityObservation` e `DiscoveryResult`.
+- `manifestValidator.ts`: Validação estrita de manifestos, integridade de tipos e detecção de ciclos topológicos em dependências ($A \to B \to A$).
+- `providerProbe.ts` & `capabilityProbe.ts`: Observação não-destrutiva de conectividade e metadados.
+- `discoveryEngine.ts`: Coordenador autônomo com emissão de eventos criptográficos no Evidence Fabric (`DISCOVERY_STARTED`, `DISCOVERY_COMPLETED`, `DISCOVERY_REJECTED`) e aprendizado na Semantic Memory.
+- `discoveryReplay.ts`: Motor de replay determinístico e somente leitura (`READ-ONLY`) com verificação de digest SHA-256.
 
-1. `types.ts`: Taxonomias e tipos formais para fontes de descoberta, vereditos de verificação, motivos de revogação e resultados de replay.
-2. `discoverySchema.ts`: Contratos Zod para `DiscoverySourceSchema`, `DiscoveryCandidateSchema`, `ProviderObservationSchema`, `CapabilityObservationSchema`, `VerificationResultSchema`, `LifecycleTransitionSchema`, `HealthSnapshotSchema`, `RevocationRecordSchema` e `DiscoveryReplayResultSchema`.
-3. `manifestValidator.ts`: Validador sintático e semântico com sanitização de segredos e detecção de dependências circulares.
-4. `providerProbe.ts`: Sonda não destrutiva para avaliação de transporte, saúde e adaptadores.
-5. `capabilityProbe.ts`: Classificador de domínios, operações e níveis de risco.
-6. `verificationEngine.ts`: Motor de verificação em 8 eixos ortogonais.
-7. `lifecycleManager.ts`: Máquina de estados finitos com ancoragem de evidências no Evidence Fabric.
-8. `healthMonitor.ts`: Monitor de saúde operacional com degradação progressiva ($N \ge 3$) e desativação ($N \ge 5$).
-9. `revocationManager.ts`: Gestor de revogação auditada e invalidação de registros.
-10. `discoveryReplay.ts`: Motor forense determinístico de replay em modo Read-Only.
-11. `discoveryEngine.ts`: Coordenador autônomo de todo o ciclo de descoberta, ativação, registro e aprendizado semântico.
-12. `index.ts`: Ponto de entrada unificado exportado pelo ecossistema de capabilities.
+### 2.2. Verification Engine (`src/capabilities/verification/`)
+- `verificationAxes.ts`: Definição dos 8 eixos ortogonais de verificação: `IDENTITY`, `TRANSPORT`, `SCHEMA`, `ADAPTER`, `HEALTH`, `AUTH`, `SCOPE`, `DEPENDENCIES`.
+- `verificationDiagnostics.ts`: Códigos de diagnóstico padronizados (`IDENTITY_INVALID`, `ADAPTER_NOT_FOUND`, `HEALTH_CHECK_FAILED`, etc.).
+- `verificationSchema.ts`: Schemas Zod para resultados de verificação e replay.
+- `verificationEngine.ts`: Avaliador dos 8 eixos que calcula o `verificationDigest` SHA-256 e emite eventos `VERIFICATION_COMPLETED` e `VERIFICATION_REJECTED`.
+- `verificationReplay.ts`: Motor forense de replay para validação de integridade e detecção de divergências.
+
+### 2.3. Provider Lifecycle Manager (`src/capabilities/lifecycle/`)
+- `lifecycleTransitions.ts`: Matriz de adjacência de transições de estado legais (`LEGAL_LIFECYCLE_TRANSITIONS`) impedindo saltos ilegais (`DISCOVERED` $\to$ `VERIFIED`).
+- `lifecycleSchema.ts`: Schemas de transições, snapshots de saúde e registros de revogação.
+- `lifecycleManager.ts`: Máquina de estados finitos (FSM) progressiva e com fail-closed.
+- `healthMonitor.ts`: Monitor de telemetria operacional com thresholds de degradação (3 falhas consecutivas $\to$ `DEGRADED`, 5 falhas consecutivas $\to$ `DISABLED`) e recuperação com probe real.
+- `revocationManager.ts`: Gerenciador de revogação imediata e atômica com invalidação no `ProviderRegistry`, `CapabilityRegistry`, `ProviderLifecycleManager`, injeção de alerta na `MemoryStore` e emissão no `EvidenceStore`.
 
 ---
 
-## 4. Teste Real & Auditoria Hostil (116/116 PASS)
+## 3. Matriz de Testes Adversariais & Validação Física
 
-A suíte completa de testes unitários, adversariais e E2E foi executada diretamente via `node --test`:
+### 3.1. 25 Cenários de Segurança Validados (`tests/discovery/security_25_scenarios.test.js`)
+1. **API Key Discovery:** Sanitizada e redigida para `[REDACTED_SECRET]`.
+2. **JWT Discovery:** Token JWT sanitizado para `[REDACTED_SECRET]`.
+3. **Bearer Token Discovery:** Sanitizado para `[REDACTED_SECRET]`.
+4. **Private Key Discovery:** Chave RSA sanitizada para `[REDACTED_SECRET]`.
+5. **Manifest Malformado:** Rejeitado com `valid: false`.
+6. **Capability de Alto Risco:** Avaliada como `CRITICAL` com exigência de aprovação humana.
+7. **Dependência Circular:** Detectada via DFS e rejeitada (`CIRCULAR_DEPENDENCY`).
+8. **Provider sem Adapter:** Verdict `NOT_VERIFIABLE` (Eixo Adapter = `false`).
+9. **Auth não-verificada:** Verdict `NOT_VERIFIABLE`.
+10. **Provider Unhealthy:** Verdict `REJECTED`.
+11. **Provider Revogado:** Verdict `REJECTED`.
+12. **Salto Ilegal DISCOVERED $\to$ VERIFIED:** Lança `ILLEGAL_LIFECYCLE_TRANSITION`.
+13. **Salto Ilegal UNKNOWN $\to$ VERIFIED:** Lança `ILLEGAL_LIFECYCLE_TRANSITION`.
+14. **Salto Ilegal REVOKED $\to$ VERIFIED:** Lança `ILLEGAL_LIFECYCLE_TRANSITION`.
+15. **Weaver bloqueado em provider revogado:** Execução rejeitada fail-closed.
+16. **Resolver bloqueado em provider desabilitado:** Resolução rejeitada fail-closed (`ALL_PROVIDERS_DISABLED` / `POLICY_DENIED`).
+17. **Shell Injection no Descriptor:** Tratado como string inerte, zero execução.
+18. **eval / new Function no Descriptor:** Tratado como dado inerte, zero execução.
+19. **Execução arbitrária de código:** Descritor sem adaptador bloqueado de registro.
+20. **Elevação de autoridade via Memória:** Registro de memória não sobrepõe o `VerificationEngine`.
+21. **Mutação de estado no Replay:** Replay é estritamente `READ-ONLY`.
+22. **Recuperação de Saúde Incorreta:** Não recupera sem probe real de execução.
+23. **Threshold de 3 Falhas:** Provider transiciona para `DEGRADED`.
+24. **Threshold de 5 Falhas:** Provider transiciona para `DISABLED`.
+25. **Bypass de Fallback:** Provedores revogados excluídos da seleção de fallback do Weaver.
 
-- `tests/discovery/schema.test.js`: Validação de contratos Zod e defaults de descoberta.
-- `tests/discovery/manifest.test.js`: Validação de manifestos limpos, sanitização de segredos e rejeição de dependências circulares.
-- `tests/discovery/lifecycle.test.js`: Validação de transições legais e bloqueio de saltos ilegais (`DISCOVERED` $\to$ `VERIFIED`).
-- `tests/discovery/verification.test.js`: Avaliação dos 8 eixos de verificação e emissão de vereditos determinísticos.
-- `tests/discovery/health.test.js`: Monitoramento de falhas consecutivas, degradação para `DEGRADED`, desativação para `DISABLED` e recuperação em sucesso.
-- `tests/discovery/revocation.test.js`: Revogação formal, invalidação no `ProviderRegistry` e emissão de evidência.
-- `tests/discovery/adversarial.test.js`: Injeção de manifestos maliciosos, escalação de privilégios de ciclo de vida e bloqueio de execução de providers revogados no `WeaverRouter`.
-- `tests/discovery/replay.test.js`: Avaliação de determinismo em modo Read-Only com vereditos `IDENTICAL` e `DIVERGENT`.
-- `tests/discovery/e2e.test.js`: Pipeline completo e físico conectando Descoberta $\to$ Validação $\to$ Verificação $\to$ Ativação FSM $\to$ Execução Real Weaver $\to$ Emissão de Evidência $\to$ Aprendizado Semântico $\to$ Replay.
+---
 
-### Resultado Consolidado:
-```
-ℹ tests 116
-ℹ suites 0
-ℹ pass 116
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 5360.496441
-```
+## 4. Resultados da Suite de Testes & Singularity Doctor
 
-### Diagnóstico Singularity Doctor:
-```
-================================================================
-  HEALTH SCORE: 100.0% — 100% OPERATIONAL (ALL 31 CHECKS PASSED) ✓
-================================================================
-```
+- **Total de Testes Físicos:** 116/116 PASS (0 falhas).
+- **Tempo de Execução:** 5.37s.
+- **Singularity Doctor Health Score:** 100.0% (31/31 checks aprovados em 8 eixos de saúde).
+- **Status do Sistema:** 100% OPERACIONAL.
